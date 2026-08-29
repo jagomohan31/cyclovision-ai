@@ -1,0 +1,78 @@
+"""
+Shared configuration for CycloVision AI.
+
+Central place for:
+  - IMD (India Meteorological Department) cyclone intensity categories
+  - File paths
+  - Model/image hyperparameters
+
+Keeping these in one file means every script (preprocessing, training,
+dashboard) agrees on the same category boundaries and paths.
+"""
+
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_RAW = PROJECT_ROOT / "data" / "raw"
+DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
+
+INSAT_DIR = DATA_RAW / "insat"
+ERA5_DIR = DATA_RAW / "era5"
+IBTRACS_DIR = DATA_RAW / "ibtracs"
+
+# ---------------------------------------------------------------------------
+# IMD cyclone intensity categories
+# Source: India Meteorological Department (RSMC New Delhi) classification,
+# based on maximum sustained surface wind speed (3-minute average), in km/h.
+# NOTE: This is deliberately NOT the Saffir-Simpson scale used internationally
+# — IMD uses 7 tiers, which is what our classifier is trained to output,
+# since that's what Indian forecasters and NDMA actually use.
+# ---------------------------------------------------------------------------
+IMD_CATEGORIES = [
+    # (label,                          min_kmh, max_kmh)
+    ("Low Pressure Area",                0,   30),
+    ("Depression",                      31,   50),
+    ("Deep Depression",                 51,   62),
+    ("Cyclonic Storm",                  63,   88),
+    ("Severe Cyclonic Storm",           89,  117),
+    ("Very Severe Cyclonic Storm",     118,  166),
+    ("Extremely Severe Cyclonic Storm",167,  221),
+    ("Super Cyclonic Storm",           222, 10_000),
+]
+
+# Convenience lookups
+CATEGORY_NAMES = [c[0] for c in IMD_CATEGORIES]
+NUM_CATEGORIES = len(IMD_CATEGORIES)
+
+
+def wind_speed_to_category(wind_kmh: float) -> int:
+    """Map a sustained wind speed (km/h) to an IMD category index (0-7)."""
+    for idx, (_, lo, hi) in enumerate(IMD_CATEGORIES):
+        if lo <= wind_kmh <= hi:
+            return idx
+    # Anything above the last bracket's max still counts as Super Cyclonic Storm
+    return NUM_CATEGORIES - 1
+
+
+def category_name(idx: int) -> str:
+    return CATEGORY_NAMES[idx]
+
+
+# ---------------------------------------------------------------------------
+# Image / sequence hyperparameters
+# ---------------------------------------------------------------------------
+CROP_SIZE = 128            # pixels; frame is cropped to CROP_SIZE x CROP_SIZE around storm centre
+SEQUENCE_LENGTH_IN = 8     # number of past frames fed to the prediction model
+SEQUENCE_LENGTH_OUT = 4    # number of future frames/steps predicted
+FRAME_INTERVAL_MINUTES = 30  # nominal INSAT frame cadence
+
+# ERA5 physical features fused alongside imagery for classification/prediction
+ERA5_FEATURES = [
+    "sea_surface_temperature",
+    "wind_shear_850_200hpa",
+    "relative_humidity_700hpa",
+    "mean_sea_level_pressure",
+]

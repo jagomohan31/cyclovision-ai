@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "source_url": "https://rsmcnewdelhi.imd.gov.in/download.php?path=uploads/best-track/78b4b0_Best_Tracks__Data__1982-2026_.xlsx",
+  "source_sha256": "f29c4ad4ede53cbb7468680a41beeb0b0030e96b5af35f9749f74eeef29adcb6",
+  "generated_at": "2026-08-09T13:49:29+00:00",
+  "n_storms": 425,
+  "n_obs": 7585,
+  "n_remarks": 656,
+  "year_min": 1982,
+  "year_max": 2026
+}

@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Data (large files shouldn't go in git — see data/raw/*/README or SOURCE.md
+# for how to (re)download each source)
+data/raw/insat/**
+data/raw/era5/**
+!data/raw/insat/.gitkeep
+!data/raw/era5/.gitkeep
+
+# Model artifacts
+*.pt
+*.pth
+*.ckpt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Notebooks checkpoints
+.ipynb_checkpoints/

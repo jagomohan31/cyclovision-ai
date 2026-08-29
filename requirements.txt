@@ -1,0 +1,25 @@
+# Core
+numpy>=1.26
+pandas>=2.0
+xarray>=2024.1
+netCDF4>=1.6
+
+# Deep learning
+torch>=2.1
+torchvision>=0.16
+
+# Satellite / geospatial
+cartopy>=0.22
+opencv-python-headless>=4.9
+
+# Dashboard
+streamlit>=1.32
+
+# Utilities
+matplotlib>=3.8
+pyarrow>=15.0        # parquet support (used by data/raw/ibtracs loaders)
+tqdm>=4.66
+requests>=2.31
+
+# Dev / testing
+pytest>=8.0
