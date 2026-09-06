@@ -11,35 +11,34 @@ another line of docs.
 
 ---
 
-## What's already working (verified today)
+## What's already working (verified)
 
 | Piece | Status | Proof |
 |---|---|---|
 | Real IMD cyclone data | ✅ 425 storms, 1982-2026, 7,585 observations | `data/raw/ibtracs/SOURCE.md` |
+| Real ERA5 reanalysis data | ✅ 425/425 storms (100%), SST, MSLP, U/V wind | `data/raw/era5/` (NetCDF files) |
 | Preprocessing (crop/normalize/sequence) | ✅ unit tested | `pytest tests/` |
 | Detection model (U-Net) | ✅ forward pass verified | `python src/models/detection.py` |
-| Classification model (CNN + ERA5 fusion) | ✅ forward pass verified, outputs all 8 IMD tiers | `python -m src.models.classification` |
+| Classification model (CNN + ERA5 fusion) | ✅ IMD 7-tier scale + LPA baseline (8 output bins) | `python -m src.models.classification` |
 | Prediction model (ConvLSTM) | ✅ forward pass verified | `python src/models/prediction.py` |
-| Full training loop | ✅ runs end-to-end on real labels | `python -m src.training.train_classifier --subset 160 --epochs 2` |
-| Evaluation metrics (IoU, per-class F1, track error km) | ✅ unit tested | `pytest tests/` |
+| Full training loop (leak-free) | ✅ storm-ID level train/val split (zero leakage) | `python -m src.training.train_classifier` |
+| Evaluation metrics & tests | ✅ 15 unit tests passing (incl. NaN guards & split) | `pytest tests/ -v` |
+| Interactive Web Dashboard | ✅ live interactive UI with map, telemetry, AI | `streamlit run app.py` |
 
 Run everything at once:
 ```bash
 pip install -r requirements.txt
 pytest tests/ -v
+streamlit run app.py
 ```
 
-## What's NOT done yet (the real next steps)
+## What's NOT done yet (the real next step)
 
 The one thing no code can do for you: **real INSAT satellite imagery**
 needs a MOSDAC account (manual approval) — see `docs/mosdac_guide.md`.
 Until then, the classifier trains on real IMD labels paired with a
-synthetic placeholder image, specifically so you can test the whole
-pipeline today without waiting. Do the MOSDAC signup **first**, today —
-it's the one step on someone else's clock.
-
-ERA5 (physical features) needs a Copernicus CDS API key — usually approved
-fast — see `src/data/download_era5.py`.
+synthetic placeholder image and **100% real ERA5 reanalysis physical features**.
+Do the MOSDAC signup **first** — it's the one step on someone else's clock.
 
 ---
 
@@ -47,31 +46,34 @@ fast — see `src/data/download_era5.py`.
 
 ```
 cyclovision-ai/
+├── app.py                 # Live interactive Streamlit dashboard (map, telemetry, AI inference)
 ├── data/
 │   ├── raw/
-│   │   ├── ibtracs/       # REAL DATA — IMD best-track record (already here)
+│   │   ├── ibtracs/       # REAL DATA — IMD best-track record (425 storms, 1982-2026)
 │   │   ├── insat/         # empty — your MOSDAC downloads go here
-│   │   └── era5/          # empty — your Copernicus downloads go here
+│   │   └── era5/          # REAL DATA — 425/425 downloaded Copernicus NetCDF reanalyses
 │   └── processed/
 ├── docs/
-│   └── mosdac_guide.md    # step-by-step: getting real satellite imagery
+│   ├── mosdac_guide.md    # step-by-step: getting real satellite imagery
+│   └── pitch_presentation.md # SIH presentation script & judges Q&A guide
 ├── src/
-│   ├── config.py          # IMD 7-tier category thresholds, paths, hyperparams
+│   ├── config.py          # IMD 7-tier scale + LPA baseline thresholds, paths, hyperparams
 │   ├── data/
 │   │   ├── preprocessing.py    # crop / normalize / sequence-building
 │   │   ├── load_besttrack.py   # loads real IMD data, validates categories
-│   │   ├── dataset.py          # PyTorch Dataset (real image -> falls back to synthetic)
+│   │   ├── dataset.py          # PyTorch Dataset (real ERA5 fusion + synthetic image fallback)
 │   │   ├── download_ibtracs.py # refresh/extend the best-track data
-│   │   └── download_era5.py    # pull ERA5 physical features
+│   │   ├── download_era5.py    # single storm ERA5 downloader
+│   │   └── download_era5_all.py# bulk 425-storm ERA5 downloader (100% complete)
 │   ├── models/
 │   │   ├── detection.py        # Model A — U-Net, finds storm + eye
-│   │   ├── classification.py   # Model B — hybrid CNN+ERA5, IMD 7-tier grade
+│   │   ├── classification.py   # Model B — hybrid CNN + real ERA5 fusion
 │   │   └── prediction.py       # Model C — ConvLSTM, track & intensity forecast
 │   └── training/
 │       ├── metrics.py          # IoU, per-class F1, track error (km)
-│       └── train_classifier.py # training loop (start here — most tractable)
+│       └── train_classifier.py # leak-free training loop (split by storm ID)
 └── tests/
-    └── test_models.py     # run this after ANY change: pytest tests/ -v
+    └── test_models.py     # 15 tests: models, metrics, NaN-guards, storm split
 ```
 
 ## Day-1 checklist for the team

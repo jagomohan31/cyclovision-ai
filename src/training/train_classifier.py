@@ -90,13 +90,28 @@ def main():
         full_dataset.obs = full_dataset.dataset.obs.iloc[full_dataset.indices].reset_index(drop=True)
         print(f"[--subset] Using {len(full_dataset)} samples for a fast smoke-test.")
 
-    val_size = int(len(full_dataset) * args.val_split)
-    train_size = len(full_dataset) - val_size
-    train_ds, val_ds = random_split(
-        full_dataset, [train_size, val_size],
-        generator=torch.Generator().manual_seed(42),
-    )
-    print(f"Train: {train_size} | Val: {val_size}")
+    # Split by storm ID — not random observation — so no storm's observations
+    # appear in both train and val. Random observation splits cause data
+    # leakage (the model sees the same storm at t=1 in train and t=2 in val).
+    import pandas as pd
+    from torch.utils.data import Subset
+
+    base_ds = full_dataset.dataset if hasattr(full_dataset, "dataset") else full_dataset
+    obs = base_ds.obs
+    all_storm_ids = np.array(obs["storm_id"].unique(), dtype=str)
+    rng_split = np.random.default_rng(42)
+    rng_split.shuffle(all_storm_ids)
+    n_val_storms = max(1, int(len(all_storm_ids) * args.val_split))
+    val_storms = set(all_storm_ids[:n_val_storms])
+    train_storms = set(all_storm_ids[n_val_storms:])
+
+    train_idx = obs.index[obs["storm_id"].isin(train_storms)].tolist()
+    val_idx   = obs.index[obs["storm_id"].isin(val_storms)].tolist()
+
+    train_ds = Subset(base_ds, train_idx)
+    val_ds   = Subset(base_ds, val_idx)
+    print(f"Train: {len(train_ds)} obs ({len(train_storms)} storms) | "
+          f"Val: {len(val_ds)} obs ({len(val_storms)} storms) — split by storm ID")
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)

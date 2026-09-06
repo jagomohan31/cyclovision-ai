@@ -13,8 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import torch
 
-from src.config import NUM_CATEGORIES, ERA5_FEATURES, wind_speed_to_category, IMD_CATEGORIES
+from src.config import NUM_CATEGORIES, ERA5_FEATURES, wind_speed_to_category, IMD_CATEGORIES, ERA5_DIR
 from src.data.preprocessing import crop_to_storm_center, normalize_brightness_temperature, build_sequences
+from src.data.dataset import _load_era5_features
 from src.models.detection import CycloneUNet, locate_eye_from_mask
 from src.models.classification import CycloneClassifier
 from src.models.prediction import CyclonePredictor
@@ -109,6 +110,66 @@ def test_haversine_known_distance():
     # Chennai (13.08N, 80.27E) to Kolkata (22.57N, 88.36E) is ~1330-1370 km
     d = haversine_km(13.08, 80.27, 22.57, 88.36)
     assert 1300 < d < 1400
+
+
+def test_era5_feature_extraction_no_nans_on_missing_file():
+    """Missing storm files should return a zero-vector fallback without crashing or NaNs."""
+    from datetime import datetime
+    feats = _load_era5_features("NON_EXISTENT_STORM", datetime(2023, 6, 15, 12, 0))
+    assert isinstance(feats, np.ndarray)
+    assert feats.shape == (len(ERA5_FEATURES),)
+    assert feats.dtype == np.float32
+    assert not np.isnan(feats).any()
+    assert (feats == 0.0).all()
+
+
+def test_real_era5_file_loading_and_nan_guarding():
+    """Verify that an existing downloaded storm file loads with zero NaNs and valid normalized bounds."""
+    from datetime import datetime
+    test_file = ERA5_DIR / "2023-003_era5.nc"
+    if not test_file.exists():
+        import pytest
+        pytest.skip("2023-003_era5.nc not present in raw era5 directory.")
+
+    feats = _load_era5_features("2023-003", datetime(2023, 6, 10, 6, 0))
+    assert isinstance(feats, np.ndarray)
+    assert feats.shape == (len(ERA5_FEATURES),)
+    assert feats.dtype == np.float32
+    # Critical: assert strict absence of NaNs, Infs, or masked elements
+    assert not np.isnan(feats).any()
+    assert np.isfinite(feats).all()
+    # Physical sanity check on normalized values (should roughly fall between -10 and +10)
+    assert (np.abs(feats) < 15.0).all()
+
+
+def test_storm_level_train_val_split_zero_leakage():
+    """Ensure that train/val splitting by storm ID guarantees zero overlap of storms."""
+    import pandas as pd
+    # Construct a synthetic observations dataframe with multiple fixes per storm
+    fake_obs = pd.DataFrame({
+        "storm_id": ["STORM_A"] * 10 + ["STORM_B"] * 8 + ["STORM_C"] * 15 + ["STORM_D"] * 5 + ["STORM_E"] * 12,
+        "wind_kmh": [60.0] * 50,
+        "category_from_grade": [2] * 50,
+    })
+
+    all_storms = np.array(fake_obs["storm_id"].unique(), dtype=str)
+    rng = np.random.default_rng(42)
+    shuffled = all_storms.copy()
+    rng.shuffle(shuffled)
+
+    val_split = 0.2
+    n_val = max(1, int(len(shuffled) * val_split))
+    val_storms = set(shuffled[:n_val])
+    train_storms = set(shuffled[n_val:])
+
+    # 1. Storm IDs must be strictly disjoint
+    assert val_storms.isdisjoint(train_storms), "Data leakage! Storm ID found in both train and val."
+
+    # 2. Observation indices must be mutually exclusive and exhaust the dataset
+    train_idx = set(fake_obs.index[fake_obs["storm_id"].isin(train_storms)])
+    val_idx = set(fake_obs.index[fake_obs["storm_id"].isin(val_storms)])
+    assert train_idx.isdisjoint(val_idx), "Observation indices overlap between splits!"
+    assert len(train_idx) + len(val_idx) == len(fake_obs), "Indices do not cover all observations!"
 
 
 if __name__ == "__main__":

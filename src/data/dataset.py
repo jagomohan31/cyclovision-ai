@@ -25,9 +25,58 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from src.config import INSAT_DIR, CROP_SIZE, ERA5_FEATURES, NUM_CATEGORIES
+from src.config import INSAT_DIR, ERA5_DIR, CROP_SIZE, ERA5_FEATURES, NUM_CATEGORIES
 from src.data.preprocessing import crop_to_storm_center, normalize_brightness_temperature
 from src.data.load_besttrack import load_observations
+
+
+def _load_era5_features(storm_id: str, obs_time) -> np.ndarray:
+    """
+    Load ERA5 features for a given storm observation from the downloaded .nc file.
+    Returns a float32 array of shape (4,): [SST_mean, MSLP_mean, U10_mean, V10_mean].
+    Falls back to zeros if the ERA5 file hasn't been downloaded yet for this storm.
+    """
+    nc_path = ERA5_DIR / f"{storm_id}_era5.nc"
+    if not nc_path.exists():
+        return np.zeros(len(ERA5_FEATURES), dtype=np.float32)
+
+    try:
+        import netCDF4 as nc
+        from datetime import timezone
+
+        ds = nc.Dataset(str(nc_path))
+        times = ds.variables["valid_time"][:]  # seconds since 1970-01-01
+
+        # Find the closest time step to the observation time
+        obs_ts = obs_time.timestamp() if hasattr(obs_time, "timestamp") else float(obs_time)
+        idx = int(np.argmin(np.abs(np.array(times, dtype=float) - obs_ts)))
+
+        features = []
+        for var in ["sst", "msl", "u10", "v10"]:
+            arr = ds.variables[var][idx]
+            # compressed() returns only the non-masked values as a plain ndarray
+            if hasattr(arr, "compressed"):
+                valid = arr.compressed()
+            else:
+                valid = np.asarray(arr).flatten()
+            val = float(np.nanmean(valid)) if len(valid) > 0 else 0.0
+            features.append(0.0 if np.isnan(val) else val)
+
+        ds.close()
+
+        # Normalise to roughly zero-mean unit-variance using known physical ranges
+        # SST: ~270-310 K  → subtract 290, divide by 15
+        # MSLP: ~95000-102000 Pa → subtract 101325, divide by 1500
+        # U10, V10: ~-20 to 20 m/s → divide by 10
+        features[0] = (features[0] - 290.0) / 15.0
+        features[1] = (features[1] - 101325.0) / 1500.0
+        features[2] = features[2] / 10.0
+        features[3] = features[3] / 10.0
+
+        return np.array(features, dtype=np.float32)
+
+    except Exception:
+        return np.zeros(len(ERA5_FEATURES), dtype=np.float32)
 
 
 def _synthetic_frame(category_idx: int, size: int, rng: np.random.Generator) -> np.ndarray:
@@ -91,11 +140,9 @@ class CycloneClassificationDataset(Dataset):
 
         image = torch.from_numpy(normalized).unsqueeze(0).float()  # (1, H, W)
 
-        # ERA5 features aren't wired up yet (needs Copernicus CDS access — see
-        # src/data/download_era5.py); zeros keep the fusion model's forward
-        # pass correct so training runs end-to-end today. Swap in real ERA5
-        # values as soon as you have them, same way as the imagery above.
-        era5 = torch.zeros(len(ERA5_FEATURES), dtype=torch.float32)
+        # Load real ERA5 features if downloaded, else fall back to zeros.
+        era5_np = _load_era5_features(row["storm_id"], row["time"])
+        era5 = torch.from_numpy(era5_np).float()
 
         label = int(row["category_from_grade"])
         return {

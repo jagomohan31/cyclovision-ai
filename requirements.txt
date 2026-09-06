@@ -9,7 +9,6 @@ torch>=2.1
 torchvision>=0.16
 
 # Satellite / geospatial
-cartopy>=0.22
 opencv-python-headless>=4.9
 
 # Dashboard

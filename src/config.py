@@ -27,9 +27,22 @@ IBTRACS_DIR = DATA_RAW / "ibtracs"
 # IMD cyclone intensity categories
 # Source: India Meteorological Department (RSMC New Delhi) classification,
 # based on maximum sustained surface wind speed (3-minute average), in km/h.
-# NOTE: This is deliberately NOT the Saffir-Simpson scale used internationally
-# — IMD uses 7 tiers, which is what our classifier is trained to output,
-# since that's what Indian forecasters and NDMA actually use.
+#
+# TERMINOLOGY NOTE FOR PRESENTATIONS & PAPERS:
+# IMD formally defines a 7-tier scale for cyclonic disturbances:
+#   Tier 1: Depression (D)
+#   Tier 2: Deep Depression (DD)
+#   Tier 3: Cyclonic Storm (CS)
+#   Tier 4: Severe Cyclonic Storm (SCS)
+#   Tier 5: Very Severe Cyclonic Storm (VSCS)
+#   Tier 6: Extremely Severe Cyclonic Storm (ESCS)
+#   Tier 7: Super Cyclonic Storm (SuCS)
+#
+# In this codebase, we also include Tier 0: "Low Pressure Area" (pre-cyclonic
+# baseline, <31 km/h) so the system can track early-stage disturbances before
+# they reach Depression grade. This yields 8 discrete classification bins
+# (NUM_CATEGORIES = 8). When presenting to judges, refer to this as:
+# "IMD's 7-tier cyclone intensity scale, plus a pre-cyclonic Low Pressure Area baseline".
 # ---------------------------------------------------------------------------
 IMD_CATEGORIES = [
     # (label,                          min_kmh, max_kmh)
