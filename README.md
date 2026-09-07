@@ -18,12 +18,11 @@ another line of docs.
 | Real IMD cyclone data | ✅ 425 storms, 1982-2026, 7,585 observations | `data/raw/ibtracs/SOURCE.md` |
 | Real ERA5 reanalysis data | ✅ 425/425 storms (100%), SST, MSLP, U/V wind | `data/raw/era5/` (NetCDF files) |
 | Preprocessing (crop/normalize/sequence) | ✅ unit tested | `pytest tests/` |
-| Detection model (U-Net) | ✅ forward pass verified | `python src/models/detection.py` |
-| Classification model (CNN + ERA5 fusion) | ✅ IMD 7-tier scale + LPA baseline (8 output bins) | `python -m src.models.classification` |
-| Prediction model (ConvLSTM) | ✅ forward pass verified | `python src/models/prediction.py` |
-| Full training loop (leak-free) | ✅ storm-ID level train/val split (zero leakage) | `python -m src.training.train_classifier` |
-| Evaluation metrics & tests | ✅ 15 unit tests passing (incl. NaN guards & split) | `pytest tests/ -v` |
-| Interactive Web Dashboard | ✅ live interactive UI with map, telemetry, AI | `streamlit run app.py` |
+| Detection model (U-Net) | ✅ trained & checkpointed (IoU + Eye Centroid) | `python -m src.training.train_detector` |
+| Classification model (CNN + ERA5 fusion) | ✅ trained & checkpointed (IMD 7-tier scale + LPA) | `python -m src.training.train_classifier` |
+| Prediction model (ConvLSTM) | ✅ trained & checkpointed (Track +24h + Wind MAE) | `python -m src.training.train_predictor` |
+| Evaluation metrics & tests | ✅ 19 unit tests passing (100% pass rate) | `pytest tests/ -v` |
+| Interactive Web Dashboard | ✅ live interactive UI (map, +24h cone, telemetry, AI) | `streamlit run app.py` |
 
 Run everything at once:
 ```bash
