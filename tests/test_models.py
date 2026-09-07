@@ -219,6 +219,49 @@ def test_predictor_training_step_backward():
     assert has_grad
 
 
+def test_cyclone_detection_dataset_shapes():
+    """Verify that CycloneDetectionDataset outputs correct image, mask, and eye coordinates."""
+    import pandas as pd
+    from src.training.train_detector import CycloneDetectionDataset
+    fake_obs = pd.DataFrame({
+        "storm_id": ["STORM_A", "STORM_B"],
+        "lat": [15.0, 16.0],
+        "lon": [82.0, 83.0],
+        "wind_kmh": [75.0, 110.0],
+        "category_from_grade": [3, 4],
+    })
+    ds = CycloneDetectionDataset(fake_obs, crop_size=64)
+    assert len(ds) == 2
+    sample = ds[0]
+    assert sample["image"].shape == (1, 64, 64)
+    assert sample["mask"].shape == (1, 64, 64)
+    assert sample["eye"].shape == (2,)
+    assert 0.0 <= sample["mask"].min() and sample["mask"].max() <= 1.0
+
+
+def test_detector_training_step_backward():
+    """Verify U-Net backward pass with CombinedBceDiceLoss computes finite gradients."""
+    from src.training.train_detector import CombinedBceDiceLoss
+    model = CycloneUNet(in_channels=1, base_channels=8)
+    criterion = CombinedBceDiceLoss()
+
+    dummy_img = torch.randn(2, 1, 64, 64)
+    dummy_mask = (torch.rand(2, 1, 64, 64) > 0.5).float()
+
+    logits = model(dummy_img)
+    loss = criterion(logits, dummy_mask)
+
+    assert torch.isfinite(loss)
+    loss.backward()
+
+    has_grad = False
+    for p in model.parameters():
+        if p.grad is not None:
+            has_grad = True
+            assert torch.isfinite(p.grad).all()
+    assert has_grad
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
