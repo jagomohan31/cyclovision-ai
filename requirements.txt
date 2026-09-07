@@ -13,6 +13,8 @@ opencv-python-headless>=4.9
 
 # Dashboard
 streamlit>=1.32
+pydeck>=0.8.0
+pillow>=10.0
 
 # Utilities
 matplotlib>=3.8

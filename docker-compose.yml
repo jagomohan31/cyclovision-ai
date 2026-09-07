@@ -1,0 +1,14 @@
+﻿version: '3.8'
+
+services:
+  cyclovision-ai:
+    build: .
+    container_name: cyclovision_platform
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+      - ./assets:/app/assets
