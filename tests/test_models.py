@@ -172,6 +172,53 @@ def test_storm_level_train_val_split_zero_leakage():
     assert len(train_idx) + len(val_idx) == len(fake_obs), "Indices do not cover all observations!"
 
 
+def test_cyclone_sequence_dataset_shapes():
+    """Verify that CycloneSequenceDataset builds correctly formatted sliding window tensors."""
+    import pandas as pd
+    from src.training.train_predictor import CycloneSequenceDataset
+    fake_obs = pd.DataFrame({
+        "storm_id": ["STORM_TEST"] * 15,
+        "time": pd.date_range("2023-06-01", periods=15, freq="6h"),
+        "lat": np.linspace(12.0, 18.0, 15),
+        "lon": np.linspace(80.0, 85.0, 15),
+        "wind_kmh": np.linspace(45.0, 120.0, 15),
+        "category_from_grade": [2] * 15,
+    })
+    ds = CycloneSequenceDataset(fake_obs, seq_len_in=4, seq_len_out=2, crop_size=32)
+    assert len(ds) == 10  # 15 - (4 + 2) + 1 = 10 windows
+    sample = ds[0]
+
+    assert sample["x_seq"].shape == (4, 1, 32, 32)
+    assert sample["y_frames"].shape == (2, 1, 32, 32)
+    assert sample["y_track"].shape == (2, 3)
+    assert torch.isfinite(sample["y_track"]).all()
+
+
+def test_predictor_training_step_backward():
+    """Verify ConvLSTM training step computes gradients without NaN or explosion."""
+    from src.training.train_predictor import compute_loss
+    model = CyclonePredictor(in_channels=1, hidden_channels=8, seq_len_out=2, track_features=3)
+    loss_fn = torch.nn.MSELoss()
+
+    x_seq = torch.randn(2, 4, 1, 32, 32)
+    y_frames = torch.randn(2, 2, 1, 32, 32)
+    y_track = torch.randn(2, 2, 3)
+
+    pred_frames, pred_track = model(x_seq)
+    loss, pos_loss, wind_loss = compute_loss(pred_frames, pred_track, y_frames, y_track, loss_fn)
+
+    assert torch.isfinite(loss)
+    loss.backward()
+
+    # Check gradients exist and are finite
+    has_grad = False
+    for p in model.parameters():
+        if p.grad is not None:
+            has_grad = True
+            assert torch.isfinite(p.grad).all()
+    assert has_grad
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
