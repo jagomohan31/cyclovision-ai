@@ -29,16 +29,25 @@ from src.config import INSAT_DIR, ERA5_DIR, CROP_SIZE, ERA5_FEATURES, NUM_CATEGO
 from src.data.preprocessing import crop_to_storm_center, normalize_brightness_temperature
 from src.data.load_besttrack import load_observations
 
+_ERA5_CACHE: dict[tuple[str, str], np.ndarray] = {}
+
 
 def _load_era5_features(storm_id: str, obs_time) -> np.ndarray:
     """
     Load ERA5 features for a given storm observation from the downloaded .nc file.
     Returns a float32 array of shape (4,): [SST_mean, MSLP_mean, U10_mean, V10_mean].
     Falls back to zeros if the ERA5 file hasn't been downloaded yet for this storm.
+    Caches results in-memory to make multi-epoch training fast.
     """
+    cache_key = (str(storm_id), str(obs_time))
+    if cache_key in _ERA5_CACHE:
+        return _ERA5_CACHE[cache_key]
+
     nc_path = ERA5_DIR / f"{storm_id}_era5.nc"
     if not nc_path.exists():
-        return np.zeros(len(ERA5_FEATURES), dtype=np.float32)
+        fallback = np.zeros(len(ERA5_FEATURES), dtype=np.float32)
+        _ERA5_CACHE[cache_key] = fallback
+        return fallback
 
     try:
         import netCDF4 as nc
@@ -73,28 +82,39 @@ def _load_era5_features(storm_id: str, obs_time) -> np.ndarray:
         features[2] = features[2] / 10.0
         features[3] = features[3] / 10.0
 
-        return np.array(features, dtype=np.float32)
+        out = np.array(features, dtype=np.float32)
+        _ERA5_CACHE[cache_key] = out
+        return out
 
     except Exception:
-        return np.zeros(len(ERA5_FEATURES), dtype=np.float32)
+        fallback = np.zeros(len(ERA5_FEATURES), dtype=np.float32)
+        _ERA5_CACHE[cache_key] = fallback
+        return fallback
+
+
+_SYNTH_BASE_CACHE: dict[tuple[int, int], np.ndarray] = {}
+
+
+def _get_synthetic_base(category_idx: int, size: int) -> np.ndarray:
+    key = (category_idx, size)
+    if key not in _SYNTH_BASE_CACHE:
+        yy, xx = np.mgrid[0:size, 0:size]
+        cy, cx = size / 2.0, size / 2.0
+        r2 = (yy - cy) ** 2 + (xx - cx) ** 2
+        depth = 60 + category_idx * 15
+        _SYNTH_BASE_CACHE[key] = (300.0 - depth * np.exp(-r2 / (2.0 * (size / 5.0) ** 2))).astype(np.float32)
+    return _SYNTH_BASE_CACHE[key]
 
 
 def _synthetic_frame(category_idx: int, size: int, rng: np.random.Generator) -> np.ndarray:
     """
     Generate a placeholder brightness-temperature-like frame whose
-    "coldness" (cloud-top height proxy) loosely scales with category, so a
-    model training on synthetic data can at least show non-trivial
-    learning behaviour during pipeline smoke-tests. NOT real signal —
-    replace with actual INSAT crops before trusting any reported accuracy.
+    'coldness' (cloud-top height proxy) scales with category.
+    Optimized with precomputed base grids for high-throughput training.
     """
-    yy, xx = np.mgrid[0:size, 0:size]
-    cy, cx = size / 2, size / 2
-    r = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-
-    depth = 60 + category_idx * 15  # stronger storms -> colder, deeper signature
-    base = 300 - depth * np.exp(-(r ** 2) / (2 * (size / 5) ** 2))
-    noise = rng.normal(0, 3, size=(size, size))
-    return (base + noise).astype(np.float32)
+    base = _get_synthetic_base(category_idx, size)
+    noise = rng.normal(0, 3, size=(size, size)).astype(np.float32)
+    return base + noise
 
 
 class CycloneClassificationDataset(Dataset):

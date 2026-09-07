@@ -125,13 +125,20 @@ def main():
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    best_val_loss = float("inf")
     for epoch in range(1, args.epochs + 1):
         train_loss, _, _ = run_epoch(model, train_loader, criterion, optimizer, device, train=True)
         val_loss, y_true, y_pred = run_epoch(model, val_loader, criterion, optimizer, device, train=False)
 
         acc = (y_true == y_pred).mean()
+        saved_marker = ""
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), "classifier_checkpoint.pt")
+            saved_marker = " [Saved Best Checkpoint]"
+
         print(f"Epoch {epoch}/{args.epochs} | train_loss={train_loss:.3f} "
-              f"val_loss={val_loss:.3f} val_acc={acc:.1%}")
+              f"val_loss={val_loss:.3f} val_acc={acc:.1%}{saved_marker}")
 
     print("\nFinal per-class F1 (validation set):")
     f1s = per_class_f1(y_true, y_pred, num_classes=NUM_CATEGORIES)
@@ -143,9 +150,7 @@ def main():
     print("\nConfusion matrix (rows=true, cols=pred):")
     cm = confusion_matrix(y_true, y_pred, num_classes=NUM_CATEGORIES)
     print(cm)
-
-    torch.save(model.state_dict(), "classifier_checkpoint.pt")
-    print("\nSaved checkpoint to classifier_checkpoint.pt")
+    print("\nTraining completed. Best weights saved to classifier_checkpoint.pt")
 
 
 if __name__ == "__main__":
