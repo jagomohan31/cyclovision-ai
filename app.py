@@ -28,12 +28,15 @@ from src.config import (
     INSAT_DIR,
     CROP_SIZE,
     ERA5_FEATURES,
+    SEQUENCE_LENGTH_IN,
+    SEQUENCE_LENGTH_OUT,
     wind_speed_to_category,
 )
 from src.data.load_besttrack import load_observations
 from src.data.dataset import _load_era5_features, _synthetic_frame
 from src.data.preprocessing import crop_to_storm_center, normalize_brightness_temperature
 from src.models.classification import CycloneClassifier
+from src.models.prediction import CyclonePredictor
 
 # Page configuration
 st.set_page_config(
@@ -122,30 +125,50 @@ def get_all_cyclone_data():
 
 
 @st.cache_resource
-def load_trained_model():
-    """Load the trained CycloneClassifier PyTorch model."""
+def load_trained_models():
+    """Load the trained Model B (Classifier) and Model C (Predictor) PyTorch models."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = CycloneClassifier(
+
+    # Model B: CycloneClassifier
+    clf_model = CycloneClassifier(
         num_categories=NUM_CATEGORIES,
         num_era5_features=len(ERA5_FEATURES),
     ).to(device)
-
-    ckpt_path = Path("classifier_checkpoint.pt")
-    if ckpt_path.exists():
+    b_loaded = False
+    b_ckpt = Path("classifier_checkpoint.pt")
+    if b_ckpt.exists():
         try:
-            state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
-            model.load_state_dict(state_dict)
-            model.eval()
-            return model, device, True
+            state_dict = torch.load(b_ckpt, map_location=device, weights_only=True)
+            clf_model.load_state_dict(state_dict)
+            b_loaded = True
         except Exception:
             pass
-    model.eval()
-    return model, device, False
+    clf_model.eval()
+
+    # Model C: CyclonePredictor
+    pred_model = CyclonePredictor(
+        in_channels=1,
+        hidden_channels=16,
+        seq_len_out=SEQUENCE_LENGTH_OUT,
+        track_features=3,
+    ).to(device)
+    c_loaded = False
+    c_ckpt = Path("predictor_checkpoint.pt")
+    if c_ckpt.exists():
+        try:
+            state_dict = torch.load(c_ckpt, map_location=device, weights_only=True)
+            pred_model.load_state_dict(state_dict)
+            c_loaded = True
+        except Exception:
+            pass
+    pred_model.eval()
+
+    return clf_model, pred_model, device, b_loaded, c_loaded
 
 
-# Load dataset and model
+# Load dataset and models
 df_all = get_all_cyclone_data()
-model, device, ckpt_loaded = load_trained_model()
+model, predictor_model, device, ckpt_loaded, pred_loaded = load_trained_models()
 
 # ---------------------------------------------------------------------------
 # SIDEBAR: Storm selection & parameters
@@ -220,10 +243,76 @@ st.sidebar.write(f"📍 **Position:** `{current_fix['lat']:.2f}°N, {current_fix
 
 st.sidebar.markdown("---")
 st.sidebar.caption(
-    f"Model Checkpoint: {'✅ Loaded (`classifier_checkpoint.pt`)' if ckpt_loaded else '⚠️ Default initialized'}\\n\\n"
-    f"Inference Device: `{device.type.upper()}`\\n\\n"
+    f"Model B (Classifier): {'✅ Loaded (`classifier_checkpoint.pt`)' if ckpt_loaded else '⚠️ Default initialized'}\n\n"
+    f"Model C (ConvLSTM Predictor): {'✅ Loaded (`predictor_checkpoint.pt`)' if pred_loaded else '⚠️ Default initialized'}\n\n"
+    f"Inference Device: `{device.type.upper()}`\n\n"
     f"ERA5 Coverage: **425/425 (100% Downloaded)**"
 )
+
+
+def predict_future_track(
+    obs_df: pd.DataFrame,
+    current_step: int,
+    pred_net: nn.Module,
+    dev: torch.device,
+    crop_size: int = 64,
+) -> list[dict]:
+    """
+    Run Model C (ConvLSTM) using history up to current_step to forecast
+    +6h, +12h, +18h, and +24h future trajectory coordinates, intensity, and cones.
+    """
+    in_slice = obs_df.iloc[max(0, current_step - SEQUENCE_LENGTH_IN + 1) : current_step + 1]
+    ref_row = obs_df.iloc[current_step]
+    ref_lat = float(ref_row["lat"])
+    ref_lon = float(ref_row["lon"])
+
+    frames = []
+    for _, r in in_slice.iterrows():
+        c_idx = int(r["category_from_grade"]) if pd.notna(r.get("category_from_grade")) else wind_speed_to_category(r["wind_kmh"])
+        tile = _synthetic_frame(c_idx, crop_size * 2, np.random.default_rng(42))
+        h, w = tile.shape
+        cropped = crop_to_storm_center(tile, h // 2, w // 2, crop_size=crop_size)
+        frames.append(normalize_brightness_temperature(cropped))
+
+    # Pad if fewer than SEQUENCE_LENGTH_IN
+    while len(frames) < SEQUENCE_LENGTH_IN:
+        frames.insert(0, frames[0])
+
+    x_seq = torch.from_numpy(np.stack(frames)).unsqueeze(0).unsqueeze(2).float().to(dev)
+
+    with torch.no_grad():
+        _, forecast_track = pred_net(x_seq)
+
+    offsets = forecast_track.cpu().numpy()[0]  # (seq_len_out, 3)
+
+    # Uncertainty swath radii (meters) growing with lead time
+    cone_radii = [75000, 160000, 260000, 390000]
+    base_time = ref_row["time"]
+    results = []
+
+    for step in range(len(offsets)):
+        dlat, dlon, wind = offsets[step]
+        f_lat = float(ref_lat + dlat)
+        f_lon = float(ref_lon + dlon)
+        f_wind = max(20.0, float(wind))
+        hours = (step + 1) * 6
+        step_time = base_time + pd.Timedelta(hours=hours)
+        cat = wind_speed_to_category(f_wind)
+
+        results.append({
+            "step": step + 1,
+            "lead_time": f"+{hours:02d}h",
+            "time": step_time,
+            "lat": f_lat,
+            "lon": f_lon,
+            "wind_kmh": f_wind,
+            "category": CATEGORY_NAMES[cat],
+            "radius": cone_radii[step],
+            "cone_color": [239, 68, 68, max(25, 75 - step * 12)],  # translucent red cone
+            "point_color": [220, 38, 38],
+        })
+
+    return results
 
 # ---------------------------------------------------------------------------
 # MAIN PAGE: Header & Overview
@@ -311,16 +400,64 @@ with col_map:
         width_min_pixels=3,
     )
 
+    # Model C (ConvLSTM) Trajectory & Intensity Forecast
+    forecast_pts = predict_future_track(storm_obs, step_idx, predictor_model, device)
+    forecast_df = pd.DataFrame(forecast_pts)
+
+    forecast_path_coords = [[float(current_fix["lon"]), float(current_fix["lat"])]] + [
+        [float(p["lon"]), float(p["lat"])] for p in forecast_pts
+    ]
+
+    forecast_path_layer = pdk.Layer(
+        "PathLayer",
+        data=[{"path": forecast_path_coords}],
+        get_path="path",
+        get_color=[239, 68, 68, 220],
+        width_min_pixels=4,
+    )
+
+    forecast_cone_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=forecast_df,
+        get_position="[lon, lat]",
+        get_color="cone_color",
+        get_radius="radius",
+        pickable=True,
+    )
+
+    forecast_pts_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=forecast_df,
+        get_position="[lon, lat]",
+        get_color="point_color",
+        get_radius=22000,
+        pickable=True,
+    )
+
     deck = pdk.Deck(
-        layers=[path_layer, track_layer, curr_layer],
+        layers=[path_layer, track_layer, forecast_cone_layer, forecast_path_layer, forecast_pts_layer, curr_layer],
         initial_view_state=view_state,
-        tooltip={"text": "Lat: {lat}\\nLon: {lon}"},
+        tooltip={"text": "{lead_time}: Lat {lat}, Lon {lon} | {wind_kmh} km/h"},
     )
     st.pydeck_chart(deck, use_container_width=True)
 
     st.caption(
-        "🟢 Track Points: Light Blue (Depression) ➔ Green (Cyclonic Storm) ➔ Orange/Red (Severe/Extremely Severe) ➔ Purple (Super Cyclone). White ring marks current timestep."
+        "🟢 Track Points: Historical trajectory. ⚪ White Ring: Current observation. "
+        "🔴 Red Path & Shaded Cones: Model C (ConvLSTM) +24h Forecast Path & Uncertainty Swath."
     )
+
+    # Display Model C forecast table
+    st.markdown("##### 🔮 Model C (+24h) Trajectory & Intensity Forecast")
+    fc_table_data = []
+    for p in forecast_pts:
+        fc_table_data.append({
+            "Lead Time": p["lead_time"],
+            "Forecast Time (UTC)": f"{p['time']:%Y-%m-%d %H:%M}",
+            "Coordinates": f"{p['lat']:.2f}°N, {p['lon']:.2f}°E",
+            "Wind Speed": f"{p['wind_kmh']:.1f} km/h",
+            "Projected Grade": p["category"],
+        })
+    st.dataframe(pd.DataFrame(fc_table_data), use_container_width=True, hide_index=True)
 
 with col_telemetry:
     st.subheader("🌊 ERA5 Physical Features")
