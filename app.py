@@ -145,6 +145,16 @@ def load_india_states_soi_geojson():
     return None
 
 
+@st.cache_data
+def load_india_pok_mask_geojson():
+    """Load northern PoK mask GeoJSON to obscure foreign Gilgit-Baltistan label."""
+    mask_path = Path("data/geojson/india_pok_mask.geojson")
+    if mask_path.exists():
+        with open(mask_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
 @st.cache_resource
 def load_trained_models():
     """Load the trained Model B (Classifier) and Model C (Predictor) PyTorch models."""
@@ -392,24 +402,39 @@ with col_map:
     # Survey of India (SOI) Sovereign Boundary Layers
     india_geojson = load_india_soi_geojson()
     states_geojson = load_india_states_soi_geojson()
+    pok_mask_geojson = load_india_pok_mask_geojson()
 
     soi_layers = []
 
-    # 1. Base Sovereign Landmass Mask (Fully opaque to completely obscure any third-party tile inaccuracies)
-    if india_geojson:
-        india_fill_layer = pdk.Layer(
+    # 1. Targeted Mask over Northern PoK region to obscure foreign 'Gilgit-Baltistan' text label
+    if pok_mask_geojson:
+        pok_mask_layer = pdk.Layer(
             "GeoJsonLayer",
-            data=india_geojson,
-            id="india-soi-fill",
+            data=pok_mask_geojson,
+            id="india-pok-mask",
             opacity=1.0,
             stroked=False,
             filled=True,
-            get_fill_color=[15, 23, 42, 255],  # Fully opaque dark slate matching app theme
+            get_fill_color=[14, 14, 14, 255],  # Exact Carto dark basemap land color
             pickable=False,
         )
-        soi_layers.append(india_fill_layer)
+        soi_layers.append(pok_mask_layer)
 
-    # 2. State Boundaries / Coastal Landfall Risk Zones
+    # 2. Official Indian Territory Label for the masked sector
+    ladakh_label_layer = pdk.Layer(
+        "TextLayer",
+        data=[{"name": "LADAKH", "coordinates": [75.0, 35.8]}],
+        get_position="coordinates",
+        get_text="name",
+        get_color=[148, 163, 184, 220],
+        get_size=12,
+        get_alignment_baseline="'center'",
+        get_text_anchor="'middle'",
+        pickable=False,
+    )
+    soi_layers.append(ladakh_label_layer)
+
+    # 3. State Boundaries / Coastal Landfall Risk Zones
     if show_states and states_geojson:
         states_layer = pdk.Layer(
             "GeoJsonLayer",
@@ -425,7 +450,7 @@ with col_map:
         )
         soi_layers.append(states_layer)
 
-    # 3. Official Survey of India Sovereign Border Stroke (Complete J&K, Ladakh, Arunachal Pradesh)
+    # 4. Official Survey of India Sovereign Border Stroke (Complete J&K, Ladakh, Arunachal Pradesh)
     if india_geojson:
         india_border_layer = pdk.Layer(
             "GeoJsonLayer",
@@ -571,7 +596,7 @@ with col_map:
     deck = pdk.Deck(
         layers=soi_layers + [path_layer, track_layer, forecast_cone_layer, forecast_path_layer, forecast_pts_layer, curr_layer],
         initial_view_state=view_state,
-        map_style=pdk.map_styles.CARTO_DARK_NO_LABELS,
+        map_style=pdk.map_styles.CARTO_DARK,
         tooltip=tooltip,
     )
     st.pydeck_chart(deck, use_container_width=True)
