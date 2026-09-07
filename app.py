@@ -395,16 +395,16 @@ with col_map:
 
     soi_layers = []
 
-    # 1. Base Sovereign Landmass Mask (Solid/semi-opaque to cover any third-party tile inaccuracies)
+    # 1. Base Sovereign Landmass Mask (Fully opaque to completely obscure any third-party tile inaccuracies)
     if india_geojson:
         india_fill_layer = pdk.Layer(
             "GeoJsonLayer",
             data=india_geojson,
             id="india-soi-fill",
-            opacity=0.95,
+            opacity=1.0,
             stroked=False,
             filled=True,
-            get_fill_color=[15, 23, 42, 180],  # Deep dark slate matching app theme
+            get_fill_color=[15, 23, 42, 255],  # Fully opaque dark slate matching app theme
             pickable=False,
         )
         soi_layers.append(india_fill_layer)
@@ -571,7 +571,7 @@ with col_map:
     deck = pdk.Deck(
         layers=soi_layers + [path_layer, track_layer, forecast_cone_layer, forecast_path_layer, forecast_pts_layer, curr_layer],
         initial_view_state=view_state,
-        map_style=pdk.map_styles.CARTO_DARK,
+        map_style=pdk.map_styles.CARTO_DARK_NO_LABELS,
         tooltip=tooltip,
     )
     st.pydeck_chart(deck, use_container_width=True)
