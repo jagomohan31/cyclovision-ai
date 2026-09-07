@@ -387,11 +387,7 @@ col_map, col_telemetry = st.columns([6, 4])
 with col_map:
     st.subheader("Cyclone Trajectory & IMD Intensity Track")
 
-    show_states = st.checkbox(
-        "Coastal State Zones",
-        value=True,
-        help="Toggle State Boundaries & Coastal Landfall Zones",
-    )
+    show_states = True
 
     # Survey of India (SOI) Sovereign Boundary Layers
     india_geojson = load_india_soi_geojson()
