@@ -1,4 +1,4 @@
-﻿"""
+"""
 Turnkey MOSDAC / INSAT-3D / INSAT-3DR Satellite Imagery Ingestion Tool.
 
 Converts raw MOSDAC Level-1B (L1B) or Level-1C (L1C) HDF5/NetCDF files
@@ -61,7 +61,7 @@ def extract_tir1_array(file_path: Path) -> np.ndarray:
     import netCDF4 as nc
 
     ds = nc.Dataset(str(file_path), mode="r")
-    tir_var_names = ["IMG_TIR1", "TIR1", "IMG_TIR_1", "IMG_TIR1_TEMP", "TIR_TEMP", "temp_tir1"]
+    tir_var_names = ["TIR1_BT", "IMG_TIR1", "TIR1", "IMG_TIR_1", "IMG_TIR1_TEMP", "TIR_TEMP", "temp_tir1"]
     
     selected_var = None
     for name in tir_var_names:

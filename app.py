@@ -725,10 +725,39 @@ st.subheader("Deep Learning Inference (Model A: U-Net Detector & Model B: Hybrid
 
 col_img, col_ai, col_advisory = st.columns([3, 4, 3])
 
-# Prepare inputs
+# Prepare inputs (check for real MOSDAC INSAT-3D/3DR imagery first)
 rng = np.random.default_rng(int(current_fix["time"].timestamp()) % 100000)
-synth_tile = _synthetic_frame(cat_idx, CROP_SIZE * 2, rng)
-cropped = crop_to_storm_center(synth_tile, synth_tile.shape[0] // 2, synth_tile.shape[1] // 2, crop_size=CROP_SIZE)
+
+real_insat_dir = INSAT_DIR / str(selected_storm_id)
+is_real_insat = False
+real_frame = None
+
+if real_insat_dir.exists():
+    ts_str = f"{current_fix['time']:%Y%m%d%H%M}"
+    exact_file = real_insat_dir / f"{ts_str}.npy"
+    if exact_file.exists():
+        real_frame = np.load(exact_file).astype(np.float32)
+        is_real_insat = True
+    else:
+        available = list(real_insat_dir.glob("*.npy"))
+        if available:
+            def get_dt(f):
+                try:
+                    return datetime.strptime(f.stem, "%Y%m%d%H%M")
+                except Exception:
+                    return datetime.min
+            closest_file = min(available, key=lambda f: abs(get_dt(f) - current_fix["time"]))
+            if abs(get_dt(closest_file) - current_fix["time"]).total_seconds() <= 86400:
+                real_frame = np.load(closest_file).astype(np.float32)
+                is_real_insat = True
+
+if is_real_insat and real_frame is not None:
+    h, w = real_frame.shape
+    cropped = crop_to_storm_center(real_frame, h // 2, w // 2, crop_size=CROP_SIZE)
+else:
+    synth_tile = _synthetic_frame(cat_idx, CROP_SIZE * 2, rng)
+    cropped = crop_to_storm_center(synth_tile, synth_tile.shape[0] // 2, synth_tile.shape[1] // 2, crop_size=CROP_SIZE)
+
 norm_img = normalize_brightness_temperature(cropped)
 
 input_img = torch.from_numpy(norm_img).unsqueeze(0).unsqueeze(0).float().to(device)
@@ -764,6 +793,9 @@ with col_img:
     draw.line([(cx - 10, cy), (cx + 10, cy)], fill=(239, 68, 68), width=2)
     draw.line([(cx, cy - 10), (cx, cy + 10)], fill=(239, 68, 68), width=2)
     draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=(239, 68, 68))
+
+    if is_real_insat:
+        st.info("🛰️ Real INSAT-3DR Satellite Frame (MOSDAC / ISRO)")
 
     st.image(
         pil_img,
