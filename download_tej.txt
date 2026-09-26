@@ -1,0 +1,12 @@
+option batch continue
+option confirm off
+
+open sftp://jagomohan@download.mosdac.gov.in/
+
+cd "/Order/Sep26_190744"
+
+lcd "D:\Hackathon Cyclovision AI\cyclovision-ai\MOSDAC_DATA\Tej"
+
+synchronize local "D:\Hackathon Cyclovision AI\cyclovision-ai\MOSDAC_DATA\Tej" "/Order/Sep26_190744" -resumesupport=on
+
+exit

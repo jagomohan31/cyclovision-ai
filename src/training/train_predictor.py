@@ -89,16 +89,59 @@ class CycloneSequenceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.sequences)
 
+    # Cache: storm_id -> sorted list of (timestamp_float, Path) for fast nearest lookup
+    _frame_index_cache: dict[str, list[tuple[float, Path]]] = {}
+
+    def _build_frame_index(self, storm_id: str) -> list[tuple[float, Path]]:
+        """Build sorted (timestamp_seconds, path) index for a storm's .npy files."""
+        if storm_id in self._frame_index_cache:
+            return self._frame_index_cache[storm_id]
+        from datetime import datetime, timezone
+        insat_dir = INSAT_DIR / str(storm_id)
+        entries: list[tuple[float, Path]] = []
+        if insat_dir.exists():
+            for p in insat_dir.glob("*.npy"):
+                try:
+                    dt = datetime.strptime(p.stem, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+                    entries.append((dt.timestamp(), p))
+                except ValueError:
+                    pass
+        entries.sort(key=lambda x: x[0])
+        self._frame_index_cache[storm_id] = entries
+        return entries
+
     def _get_frame(self, row: pd.Series) -> np.ndarray:
-        real_path = INSAT_DIR / str(row["storm_id"]) / f"{row['time']:%Y%m%d%H%M}.npy"
-        if real_path.exists():
-            frame = np.load(real_path).astype(np.float32)
-        else:
+        # Nearest-neighbour frame lookup: INSAT frames land at :02/:07/:15/etc,
+        # while best-track fixes are on 3-hourly marks — they never exactly coincide.
+        # Find the closest real frame within a 30-minute tolerance window.
+        from datetime import timezone
+        storm_id = str(row["storm_id"])
+        obs_ts = pd.Timestamp(row["time"]).timestamp()
+        index = self._build_frame_index(storm_id)
+
+        frame = None
+        if index:
+            import bisect
+            ts_list = [e[0] for e in index]
+            pos = bisect.bisect_left(ts_list, obs_ts)
+            # Check closest candidate on either side
+            best_dt, best_path = float("inf"), None
+            for i in (pos - 1, pos):
+                if 0 <= i < len(index):
+                    diff = abs(index[i][0] - obs_ts)
+                    if diff < best_dt:
+                        best_dt, best_path = diff, index[i][1]
+            # Accept if within ±30 min (1800 s)
+            if best_path is not None and best_dt <= 1800:
+                frame = np.load(str(best_path)).astype(np.float32)
+
+        if frame is None:
             cat = int(row.get("category_from_grade", 1)) if pd.notna(row.get("category_from_grade")) else wind_speed_to_category(row["wind_kmh"])
             base = _get_synthetic_base(cat, self.crop_size * 2)
             noise = self._rng.normal(0, 3, size=base.shape).astype(np.float32)
             frame = base + noise
 
+        frame = np.nan_to_num(frame, nan=270.0)
         h, w = frame.shape
         cropped = crop_to_storm_center(frame, h // 2, w // 2, crop_size=self.crop_size)
         return normalize_brightness_temperature(cropped)
@@ -261,9 +304,11 @@ def run_epoch(
 
 def main():
     parser = argparse.ArgumentParser(description="Train Model C (ConvLSTM) Track & Intensity Predictor")
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--patience", type=int, default=5,
+                        help="Early stopping patience (epochs without val improvement).")
     parser.add_argument("--val-split", type=float, default=0.2)
     parser.add_argument("--crop-size", type=int, default=64)
     parser.add_argument("--hidden-channels", type=int, default=16)
@@ -315,8 +360,14 @@ def main():
 
     loss_fn = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2
+    )
 
     best_val_loss = float("inf")
+    no_improve = 0
+    best_val_track_errs = {}
+    best_val_wind_err = 0.0
     print("\nStarting ConvLSTM Trajectory & Intensity Training...")
 
     for epoch in range(1, args.epochs + 1):
@@ -327,16 +378,31 @@ def main():
             model, val_loader, None, device, loss_fn, train=False
         )
 
+        scheduler.step(v_loss)
+
         saved = ""
         if v_loss < best_val_loss:
             best_val_loss = v_loss
+            no_improve = 0
             torch.save(model.state_dict(), "predictor_checkpoint.pt")
             saved = " [Saved Best Checkpoint]"
+            best_val_track_errs = val_track_errs
+            best_val_wind_err = val_wind_err
+        else:
+            no_improve += 1
 
         t6h = val_track_errs.get(1, 0.0)
         t24h = val_track_errs.get(SEQUENCE_LENGTH_OUT, 0.0)
         print(f"Epoch {epoch}/{args.epochs} | train_loss={t_loss:.4f} val_loss={v_loss:.4f} | "
               f"Track Error: +6h={t6h:.1f}km, +24h={t24h:.1f}km | Wind MAE={val_wind_err:.1f}km/h{saved}")
+
+        if no_improve >= args.patience:
+            print(f"\nEarly stopping triggered (no improvement for {args.patience} epochs).")
+            break
+
+    # Report from best checkpoint
+    val_track_errs = best_val_track_errs if best_val_track_errs else val_track_errs
+    val_wind_err = best_val_wind_err if best_val_track_errs else val_wind_err
 
     print("\n" + "=" * 60)
     print("Final Model C Validation Report (Held-Out Storms):")

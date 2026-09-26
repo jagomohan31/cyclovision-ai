@@ -11,16 +11,23 @@ data/raw/insat/**
 data/raw/era5/**
 !data/raw/insat/.gitkeep
 !data/raw/era5/.gitkeep
+data/advisories/
+data/incoming/
+data/realtime_status.json
+MOSDAC_DATA/
 
-# Model artifacts
+# Model artifacts (whitelist checkpoints needed for cloud deployment)
 *.pt
 *.pth
 *.ckpt
+!detector_checkpoint.pt
+!predictor_checkpoint.pt
 
-# OS / editor
+# OS / editor / stray files
 .DS_Store
 .vscode/
 .idea/
+).FullName
 
 # Notebooks checkpoints
 .ipynb_checkpoints/

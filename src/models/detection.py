@@ -1,5 +1,5 @@
-"""
-Model A — Detection / Identification.
+﻿"""
+Model A â€” Detection / Identification.
 
 A compact U-Net that takes a full (or tiled) INSAT infrared/water-vapour
 frame and outputs a pixel-wise probability mask of "this pixel belongs to
@@ -18,7 +18,7 @@ import torch.nn as nn
 
 
 class DoubleConv(nn.Module):
-    """(Conv -> BatchNorm -> ReLU) x2 — the basic U-Net building block."""
+    """(Conv -> BatchNorm -> ReLU) x2 â€” the basic U-Net building block."""
 
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
@@ -46,7 +46,7 @@ class CycloneUNet(nn.Module):
             each downsampling step.
     """
 
-    def __init__(self, in_channels: int = 1, base_channels: int = 32):
+    def __init__(self, in_channels: int = 1, base_channels: int = 16):
         super().__init__()
         c = base_channels
 
@@ -87,7 +87,7 @@ class CycloneUNet(nn.Module):
         d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
         d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
 
-        mask_logits = self.out_conv(d1)  # (B, 1, H, W) — apply sigmoid outside for BCEWithLogitsLoss
+        mask_logits = self.out_conv(d1)  # (B, 1, H, W) â€” apply sigmoid outside for BCEWithLogitsLoss
         return mask_logits
 
 
@@ -123,3 +123,4 @@ if __name__ == "__main__":
     print("Located eye coordinates (row, col):", eye.shape, eye)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {n_params:,}")
+
