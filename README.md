@@ -1,3 +1,4 @@
+
 # CycloVision AI
 
 AI/ML system for **identification, classification, and prediction** of
@@ -9,6 +10,8 @@ piece of code in here has been run and verified — nothing is untested
 boilerplate. See **"What's already working"** below before you read
 another line of docs.
 
+
+**'Integration plus India-calibration plus open accessibility - not a brand-new detection technique.' The individual techniques exist; assembling them into one IMD-calibrated, lightweight, end-to-end pipeline is the gap we're filling.**
 ---
 
 ## What's already working (verified)
@@ -16,13 +19,15 @@ another line of docs.
 | Piece | Status | Proof |
 |---|---|---|
 | Real IMD cyclone data | ✅ 425 storms, 1982-2026, 7,585 observations | `data/raw/ibtracs/SOURCE.md` |
-| Real ERA5 reanalysis data | ✅ 425/425 storms (100%), SST, MSLP, U/V wind | `data/raw/era5/` (NetCDF files) |
+| Real ERA5 reanalysis data | ✅ 424/425 storms, SST, MSLP, U/V wind | `data/raw/era5/` (NetCDF files) |
+| Real INSAT-3D/3DR/3DS imagery | ✅ 13,479 frames across 11 storms (MOSDAC HDF5 → .npy) | `data/raw/insat/` |
 | Preprocessing (crop/normalize/sequence) | ✅ unit tested | `pytest tests/` |
-| Detection model (U-Net) | ✅ trained & checkpointed (IoU + Eye Centroid) | `python -m src.training.train_detector` |
-| Classification model (CNN + ERA5 fusion) | ✅ trained & checkpointed (IMD 7-tier scale + LPA) | `python -m src.training.train_classifier` |
-| Prediction model (ConvLSTM) | ✅ trained & checkpointed (Track +24h + Wind MAE) | `python -m src.training.train_predictor` |
+| Detection model (U-Net) | ✅ trained — val IoU=0.986, eye error=0.11 px | `detector_checkpoint.pt` 7.82 MB |
+| Classification model (ResNet-18 + ERA5) | ✅ trained — val acc=27.1%, F1 0.13–0.54 | `classifier_checkpoint.pt` 45.08 MB |
+| Prediction model (ConvLSTM) | ✅ trained — +24h=123 km, +72h=336 km, wind MAE=98.2 km/h | `predictor_checkpoint.pt` 0.32 MB |
 | Evaluation metrics & tests | ✅ 19 unit tests passing (100% pass rate) | `pytest tests/ -v` |
-| Interactive Web Dashboard | ✅ live interactive UI (map, +24h cone, telemetry, AI) | `streamlit run app.py` |
+| Interactive Web Dashboard | ✅ live UI (map, +24h/+48h/+72h cone, telemetry, AI) | `streamlit run app.py` |
+| Real-time inference worker | ✅ watches `data/incoming/` for new H5 files, runs full pipeline | `realtime_worker.py` |
 
 Run everything at once:
 ```bash
@@ -31,13 +36,29 @@ pytest tests/ -v
 streamlit run app.py
 ```
 
-## What's NOT done yet (the real next step)
+---
 
-The one thing no code can do for you: **real INSAT satellite imagery**
-needs a MOSDAC account (manual approval) — see `docs/mosdac_guide.md`.
-Until then, the classifier trains on real IMD labels paired with a
-synthetic placeholder image and **100% real ERA5 reanalysis physical features**.
-Do the MOSDAC signup **first** — it's the one step on someone else's clock.
+## Model performance (Kaggle T4 GPU — final runs, Sep 2026)
+
+### Model A — Cyclone Detector (U-Net)
+- Architecture: CycloneUNet, base_channels=16
+- val IoU: **0.986** | Eye centroid error: **0.11 px**
+- Trained: 30/30 epochs on 13,479 INSAT frames across 11 storms
+- Checkpoint: `detector_checkpoint.pt` (7.82 MB)
+
+### Model B — Intensity Classifier (ResNet-18 + ERA5 fusion)
+- Architecture: ResNet-18 backbone + ERA5 feature fusion
+- Best val acc: **27.1%** at epoch 7, early stop epoch 17
+- Per-class F1: Depression=0.13, Deep Depression=0.30, Cyclonic Storm=0.03,
+  Severe=0.24, Very Severe=0.37, Extremely Severe=0.54
+- Note: minority class performance limited by class imbalance; retraining planned post-hackathon
+- Checkpoint: `classifier_checkpoint.pt` (45.08 MB)
+
+### Model C — Track & Intensity Predictor (ConvLSTM)
+- Architecture: ConvLSTM sequence model
+- Track errors: +6h=40.4 km | +12h=68.4 km | +24h=123.1 km | +48h=224.1 km | +72h=336.1 km
+- Wind speed MAE: **98.2 km/h** | Early stop epoch 12
+- Checkpoint: `predictor_checkpoint.pt` (0.32 MB)
 
 ---
 
@@ -75,36 +96,37 @@ cyclovision-ai/
     └── test_models.py     # 15 tests: models, metrics, NaN-guards, storm split
 ```
 
-## Day-1 checklist for the team
 
-1. **Someone registers for MOSDAC right now** (`docs/mosdac_guide.md`) — approval can take time, so this cannot be the last thing you do.
-2. Everyone else: `pip install -r requirements.txt && pytest tests/ -v` — confirm your machine runs everything.
-3. Read `src/config.py` — the IMD category thresholds are the single source of truth every model trains against.
-4. Skim `python -m src.data.load_besttrack` output — get a feel for the real class imbalance (2,776 Depressions vs. 40 Super Cyclonic Storms) before you write a single line of training code assuming balanced classes.
-5. Start with **classification** (`src/training/train_classifier.py`) — it's the most tractable of the three models and gives you a working demo fastest. Detection and prediction follow the same pattern once this one clicks.
 
-## Why a synthetic-image fallback instead of waiting for real data
-
-`src/data/dataset.py` generates a placeholder image when no real INSAT
-file exists yet at the expected path, so `train_classifier.py` runs today
-and proves the *plumbing* — data loading, class weighting, loss,
-backprop, metrics — works, before a single real satellite file is
-downloaded. The moment you drop real `.npy` crops into
-`data/raw/insat/<storm_id>/`, the exact same code starts training on real
-signal — zero changes needed. Treat any accuracy number from
-synthetic-image training as meaningless; it exists to catch bugs, not to
-report in your final results.
-
+## Training data
+| Storm | ID | INSAT frames |   ERA5 |
+|---|---|---|---|
+| Mekunu 2018 | 2018-003 | 264 | ✅ |
+| Gaja 2018 | 2018-013 | 1,231 | ✅ |
+| Fani 2019 | 2019-002 | 993 |   ✅ |
+| Vayu 2019 | 2019-003 | 1,679 | ✅ |
+| Kyarr 2019 | 2019-007 | 589 |  ✅ |
+| Maha 2019 | 2019-008 | 1,848 | ✅ |
+| Amphan 2020 | 2020-001 | 927 | ✅ |
+| Tauktae 2021 | 2021-002 | 990 | ✅ |
+| Mocha 2023 | 2023-002 | 1,343 | ✅ |
+| Biparjoy 2023 | 2023-003 | 2,782 | ✅ |
+| Tej 2023 | 2023-006 | 833 | ✅ |
+| **Total** | | **13,479** | **11/11** |
+Train/val split: per-storm 80/20 temporal (9,507 train / 2,382 val).
+---
+## Running the end-to-end simulation
+Replay Biparjoy 2023 as a live incoming feed:
+```bash
+python realtime_worker.py --mode simulate --storm-id 2023-003
+```
+This feeds H5 frames one by one into the pipeline — detector finds the eye,
+classifier assigns intensity, predictor outputs +6h through +72h track — exactly
+as it would run on a real MOSDAC live feed.
+---
 ## Citing the data
-
-If your report/demo cites data sources (it should — judges notice):
-- **IMD, RSMC New Delhi** — original best-track record (see `data/raw/ibtracs/SOURCE.md` for the exact source file)
-- **imdtrack** library (Syed, H. A., 2026) — https://doi.org/10.5281/zenodo.21301659 — used to access the IMD record in tidy form
-- **MOSDAC / ISRO-SAC** — INSAT-3D/3DR/3DS imagery (once downloaded)
-- **Copernicus Climate Data Store** — ERA5 reanalysis (once downloaded)
-
-## Matching the idea submission PPT
-
-The three-model pipeline here (Detect → Classify → Predict) and the
-4-stage architecture diagram in the PPT are the same pipeline — this repo
-is that diagram, made runnable.
+- **IMD, RSMC New Delhi** — original best-track record (see `data/raw/ibtracs/SOURCE.md`)
+- **imdtrack** library (Syed, H. A., 2026) — [doi:10.5281/zenodo.21301659](https://doi.org/10.5281/zenodo.21301659)
+- **MOSDAC / ISRO-SAC** — INSAT-3D/3DR/3DS imagery (HDF5 via MOSDAC data portal)
+- **Copernicus Climate Data Store** — ERA5 reanalysis
+---
